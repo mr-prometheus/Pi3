@@ -448,10 +448,7 @@ def gradio_demo(
         frame_filter = "All"
 
     # Build a GLB file name
-    glbfile = os.path.join(
-        target_dir,
-        f"glbscene_{conf_thres}_{frame_filter.replace('.', '_').replace(':', '').replace(' ', '_')}_cam{show_cam}.glb",
-    )
+    glbfile = build_glb_path(target_dir, conf_thres, frame_filter, show_cam)
 
     # Convert predictions to GLB
     glbscene = predictions_to_glb(
@@ -491,6 +488,16 @@ def update_log():
     return "Loading and Reconstructing..."
 
 
+def build_glb_path(target_dir, conf_thres, frame_filter, show_cam):
+    """
+    Build a stable GLB output path for current visualization settings.
+    """
+    return os.path.join(
+        target_dir,
+        f"glbscene_{conf_thres}_{frame_filter.replace('.', '_').replace(':', '').replace(' ', '_')}_cam{show_cam}.glb",
+    )
+
+
 def update_visualization(
     target_dir, conf_thres, frame_filter, show_cam, is_example
 ):
@@ -500,11 +507,13 @@ def update_visualization(
     """
 
     # If it's an example click, skip as requested
+    no_reconstruction_msg = "No reconstruction available. Please click the Reconstruct button first."
+
     if is_example == "True":
-        return None, "No reconstruction available. Please click the Reconstruct button first."
+        return None, no_reconstruction_msg
 
     if not target_dir or target_dir == "None" or not os.path.isdir(target_dir):
-        return None, "No reconstruction available. Please click the Reconstruct button first."
+        return None, no_reconstruction_msg
 
     predictions_path = os.path.join(target_dir, "predictions.npz")
     if not os.path.exists(predictions_path):
@@ -520,10 +529,7 @@ def update_visualization(
     loaded = np.load(predictions_path)
     predictions = {key: np.array(loaded[key]) for key in key_list}
 
-    glbfile = os.path.join(
-        target_dir,
-        f"glbscene_{conf_thres}_{frame_filter.replace('.', '_').replace(':', '').replace(' ', '_')}_cam{show_cam}.glb",
-    )
+    glbfile = build_glb_path(target_dir, conf_thres, frame_filter, show_cam)
 
     if not os.path.exists(glbfile):
         glbscene = predictions_to_glb(
