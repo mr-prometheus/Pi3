@@ -188,6 +188,20 @@ class Pi3X(nn.Module, PyTorchModelHubMixin):
         self.register_buffer("image_std", image_std)
 
 
+    def disable_multimodal(self, free_cuda_cache: bool = True):
+        """
+        Disables multimodal branches and releases their modules/parameters.
+        Use this when no multimodal conditions are provided.
+        """
+        self.use_multimodal = False
+        for attr in ("depth_encoder", "depth_emb", "ray_embed", "pose_inject_blk"):
+            if hasattr(self, attr):
+                delattr(self, attr)
+
+        if free_cuda_cache and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
     def forward(
         self,
         imgs,

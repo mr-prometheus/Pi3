@@ -31,23 +31,8 @@ if __name__ == '__main__':
         args.interval = 10 if args.data_path.endswith('.mp4') else 1
     print(f'Sampling interval: {args.interval}')
 
-    # 1. Prepare model
-    print(f"Loading model...")
+    # 1. Prepare input data
     device = torch.device(args.device)
-    if args.ckpt is not None:
-        model = Pi3X().to(device).eval()
-        if args.ckpt.endswith('.safetensors'):
-            from safetensors.torch import load_file
-            weight = load_file(args.ckpt)
-        else:
-            weight = torch.load(args.ckpt, map_location=device, weights_only=False)
-        
-        model.load_state_dict(weight, strict=False)
-    else:
-        model = Pi3X.from_pretrained("yyfz233/Pi3X").to(device).eval()
-        # or download checkpoints from `https://huggingface.co/yyfz233/Pi3X/resolve/main/model.safetensors`, and `--ckpt ckpts/model.safetensors`
-
-    # 2. Prepare input data
 
     # Load optional conditions from .npz
     poses = None
@@ -70,6 +55,27 @@ if __name__ == '__main__':
 
     # Load images (Required)
     imgs, conditions = load_multimodal_data(args.data_path, conditions, interval=args.interval, device=device) 
+    use_multimodal = any(v is not None for v in conditions.values())
+    if not use_multimodal:
+        print("No multimodal conditions found. Disable multimodal branch to reduce memory usage.")
+
+    # 2. Prepare model
+    print(f"Loading model...")
+    if args.ckpt is not None:
+        model = Pi3X(use_multimodal=use_multimodal).eval()
+        if args.ckpt.endswith('.safetensors'):
+            from safetensors.torch import load_file
+            weight = load_file(args.ckpt)
+        else:
+            weight = torch.load(args.ckpt, map_location=device, weights_only=False)
+        
+        model.load_state_dict(weight, strict=False)
+    else:
+        model = Pi3X.from_pretrained("yyfz233/Pi3X").eval()
+        # or download checkpoints from `https://huggingface.co/yyfz233/Pi3X/resolve/main/model.safetensors`, and `--ckpt ckpts/model.safetensors`
+        if not use_multimodal:
+            model.disable_multimodal()
+    model = model.to(device)
 
     """
     Args:
