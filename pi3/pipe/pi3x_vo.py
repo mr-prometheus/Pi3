@@ -1,4 +1,4 @@
-from ..utils.geometry import homogenize_points, depth_edge
+from ..utils.geometry import homogenize_points, depth_normal_edge
 import torch
 import torch.nn.functional as F
 
@@ -84,7 +84,8 @@ class Pi3XVO:
             curr_conf = torch.sigmoid(pred['conf'])[..., 0]
             curr_rays = pred['rays']
             
-            edge = depth_edge(curr_local_depth, rtol=0.03)
+            valid = curr_conf > conf_thre
+            edge = depth_normal_edge(pred['local_points'], rtol=0.03, mask=valid)
             curr_conf[edge] = 0
             
             curr_mask = curr_conf > conf_thre

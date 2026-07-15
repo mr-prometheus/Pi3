@@ -1,7 +1,7 @@
 import torch
 import argparse
 from pi3.utils.basic import load_images_as_tensor, write_ply
-from pi3.utils.geometry import depth_edge
+from pi3.utils.geometry import depth_normal_edge
 from pi3.models.pi3 import Pi3
 
 if __name__ == '__main__':
@@ -53,7 +53,7 @@ if __name__ == '__main__':
 
     # 4. process mask
     masks = torch.sigmoid(res['conf'][..., 0]) > 0.1
-    non_edge = ~depth_edge(res['local_points'][..., 2], rtol=0.03)
+    non_edge = ~depth_normal_edge(res['local_points'], rtol=0.03, mask=masks)
     masks = torch.logical_and(masks, non_edge)[0]
 
     # 5. Save points

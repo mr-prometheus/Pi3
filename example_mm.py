@@ -3,7 +3,7 @@ import argparse
 import numpy as np
 import os
 from pi3.utils.basic import load_multimodal_data, write_ply
-from pi3.utils.geometry import depth_edge, recover_intrinsic_from_rays_d
+from pi3.utils.geometry import depth_normal_edge, recover_intrinsic_from_rays_d
 from pi3.models.pi3x import Pi3X
 
 if __name__ == '__main__':
@@ -123,7 +123,7 @@ if __name__ == '__main__':
 
     # 4. process mask
     masks = torch.sigmoid(res['conf'][..., 0]) > 0.1
-    non_edge = ~depth_edge(res['local_points'][..., 2], rtol=0.03)
+    non_edge = ~depth_normal_edge(res['local_points'], rtol=0.03, mask=masks)
     masks = torch.logical_and(masks, non_edge)[0]
 
     # 5. Save points

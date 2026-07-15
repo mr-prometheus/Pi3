@@ -11,7 +11,7 @@ import gc
 import time
 # import spaces         # only for web demo
 
-from pi3.utils.geometry import se3_inverse, homogenize_points, depth_edge
+from pi3.utils.geometry import se3_inverse, homogenize_points, depth_normal_edge
 from pi3.models.pi3 import Pi3
 from pi3.utils.basic import load_images_as_tensor
 
@@ -301,7 +301,8 @@ def run_model(target_dir, model) -> dict:
             predictions = model(imgs[None]) # Add batch dimension
     predictions['images'] = imgs[None].permute(0, 1, 3, 4, 2)
     predictions['conf'] = torch.sigmoid(predictions['conf'])
-    edge = depth_edge(predictions['local_points'][..., 2], rtol=0.03)
+    valid = predictions['conf'][..., 0] > 0.1
+    edge = depth_normal_edge(predictions['local_points'], rtol=0.03, mask=valid)
     predictions['conf'][edge] = 0.0
     del predictions['local_points']
 

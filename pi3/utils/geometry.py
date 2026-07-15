@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -365,6 +366,154 @@ def depth_edge(depth: torch.Tensor, atol: float = None, rtol: float = None, kern
         edge |= (diff / depth).nan_to_num_() > rtol
     edge = edge.reshape(*shape)
     return edge
+
+
+def points_to_normals(points: torch.Tensor, mask: torch.Tensor = None) -> tuple[torch.Tensor, torch.BoolTensor]:
+    """
+    Estimate per-pixel normals from a dense point map.
+
+    Args:
+        points (torch.Tensor): shape (..., height, width, 3)
+        mask (torch.Tensor): optional valid mask with shape (..., height, width)
+
+    Returns:
+        normals (torch.Tensor): shape (..., height, width, 3), float32
+        normal_mask (torch.BoolTensor): pixels with enough valid neighbors
+    """
+    if points.shape[-1] != 3:
+        raise ValueError(f"points must have shape (..., H, W, 3), got {tuple(points.shape)}")
+
+    shape = points.shape
+    batch_shape = shape[:-3]
+    height, width = shape[-3:-1]
+    points = points.reshape(-1, height, width, 3).float()
+    if mask is None:
+        valid = torch.ones(points.shape[:-1], dtype=torch.bool, device=points.device)
+    else:
+        valid = mask.reshape(-1, height, width).bool()
+    valid = valid & torch.isfinite(points).all(dim=-1)
+
+    points = torch.where(valid[..., None], points, torch.zeros_like(points))
+    points_pad = F.pad(points.permute(0, 3, 1, 2), (1, 1, 1, 1), mode="constant", value=0.0).permute(0, 2, 3, 1)
+    valid_pad = F.pad(valid[:, None].float(), (1, 1, 1, 1), mode="constant", value=0.0)[:, 0].bool()
+
+    center = points_pad[:, 1:-1, 1:-1]
+    up = points_pad[:, :-2, 1:-1] - center
+    left = points_pad[:, 1:-1, :-2] - center
+    down = points_pad[:, 2:, 1:-1] - center
+    right = points_pad[:, 1:-1, 2:] - center
+
+    normals = torch.stack(
+        [
+            torch.cross(up, left, dim=-1),
+            torch.cross(left, down, dim=-1),
+            torch.cross(down, right, dim=-1),
+            torch.cross(right, up, dim=-1),
+        ],
+        dim=0,
+    )
+    normals = F.normalize(normals, dim=-1, eps=1.0e-12)
+    normal_valid = (
+        torch.stack(
+            [
+                valid_pad[:, :-2, 1:-1] & valid_pad[:, 1:-1, :-2],
+                valid_pad[:, 1:-1, :-2] & valid_pad[:, 2:, 1:-1],
+                valid_pad[:, 2:, 1:-1] & valid_pad[:, 1:-1, 2:],
+                valid_pad[:, 1:-1, 2:] & valid_pad[:, :-2, 1:-1],
+            ],
+            dim=0,
+        )
+        & valid_pad[None, :, 1:-1, 1:-1]
+    )
+
+    normals = torch.where(normal_valid[..., None], normals, torch.zeros_like(normals)).sum(dim=0)
+    normals = F.normalize(normals, dim=-1, eps=1.0e-12).nan_to_num()
+    normal_mask = normal_valid.any(dim=0)
+    normals = torch.where(normal_mask[..., None], normals, torch.zeros_like(normals))
+    return normals.reshape(*batch_shape, height, width, 3), normal_mask.reshape(*batch_shape, height, width)
+
+
+def normal_edge(
+    normals: torch.Tensor,
+    tol_deg: float = 5.0,
+    kernel_size: int = 3,
+    mask: torch.Tensor = None,
+) -> torch.BoolTensor:
+    """
+    Compute a normal discontinuity mask from a dense normal map.
+
+    A pixel is marked only when nearby valid normals differ by more than
+    ``tol_deg``. This is intended to be combined with depth discontinuities to
+    avoid treating far-range rasterization noise on smooth surfaces as object edges.
+    """
+    if normals.shape[-1] != 3:
+        raise ValueError(f"normals must have shape (..., H, W, 3), got {tuple(normals.shape)}")
+    if kernel_size % 2 != 1:
+        raise ValueError(f"kernel_size must be odd, got {kernel_size}")
+
+    shape = normals.shape
+    batch_shape = shape[:-3]
+    height, width = shape[-3:-1]
+    padding = kernel_size // 2
+    normals = normals.reshape(-1, height, width, 3).float()
+    normals = F.normalize(normals, dim=-1, eps=1.0e-12).nan_to_num()
+    if mask is None:
+        valid = torch.ones(normals.shape[:-1], dtype=torch.bool, device=normals.device)
+    else:
+        valid = mask.reshape(-1, height, width).bool()
+    valid = valid & torch.isfinite(normals).all(dim=-1)
+
+    normals_pad = F.pad(normals.permute(0, 3, 1, 2), (padding, padding, padding, padding), mode="replicate")
+    normals_pad = normals_pad.permute(0, 2, 3, 1)
+    valid_pad = F.pad(valid[:, None].float(), (padding, padding, padding, padding), mode="replicate")
+    valid_pad = valid_pad[:, 0] > 0.5
+
+    angle = torch.zeros(normals.shape[:-1], dtype=normals.dtype, device=normals.device)
+    for offset_y in range(kernel_size):
+        for offset_x in range(kernel_size):
+            neighbor = normals_pad[:, offset_y:offset_y + height, offset_x:offset_x + width]
+            neighbor_valid = valid_pad[:, offset_y:offset_y + height, offset_x:offset_x + width]
+            dot = (normals * neighbor).sum(dim=-1).clamp(-1.0, 1.0)
+            neighbor_angle = torch.where(neighbor_valid, torch.acos(dot), torch.zeros_like(dot))
+            angle = torch.maximum(angle, neighbor_angle)
+
+    angle = F.max_pool2d(angle[:, None], kernel_size=kernel_size, stride=1, padding=padding)[:, 0]
+
+    edge = (angle > math.radians(float(tol_deg))) & valid
+    return edge.reshape(*batch_shape, height, width)
+
+
+def depth_normal_edge(
+    points: torch.Tensor,
+    depth: torch.Tensor = None,
+    *,
+    rtol: float = 0.03,
+    normal_tol_deg: float = 5.0,
+    kernel_size: int = 3,
+    mask: torch.Tensor = None,
+) -> torch.BoolTensor:
+    """
+    Compute a conservative geometry edge mask from depth and local surface normals.
+
+    The returned edge is the intersection of a relative depth jump and a normal
+    discontinuity, following the camera-warp filtering policy used for mesh breaks.
+    """
+    if points.shape[-1] != 3:
+        raise ValueError(f"points must have shape (..., H, W, 3), got {tuple(points.shape)}")
+    if depth is None:
+        depth = points[..., 2]
+    if depth.shape != points.shape[:-1]:
+        raise ValueError(f"depth shape {tuple(depth.shape)} must match points shape {tuple(points.shape[:-1])}")
+
+    valid = torch.isfinite(points).all(dim=-1) & torch.isfinite(depth) & (depth > 0.0)
+    if mask is not None:
+        valid = valid & mask.bool()
+
+    depth_edges = depth_edge(depth.float(), rtol=rtol, kernel_size=kernel_size, mask=valid) & valid
+    normals, normal_mask = points_to_normals(points, valid)
+    normal_edges = normal_edge(normals, tol_deg=normal_tol_deg, kernel_size=kernel_size, mask=normal_mask)
+    return depth_edges & normal_edges
+
 
 def recover_intrinsic_from_rays_d(
     rays_d: torch.Tensor, 
