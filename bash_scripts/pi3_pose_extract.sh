@@ -13,8 +13,8 @@ eval "$(conda shell.bash hook)"
 conda activate pi3
 
 # --- Edit these before submitting ---
-VIDEO_PATH="videos/Piran_v4.mp4"
-OUTPUT_DIR="output_videos/Piran"
+VIDEO_PATH="videos/Piran_Walking_Tour_cut.mp4"
+OUTPUT_DIR="output_videos/Piran_v1"
 
 # Skips Pi3's own walk-vs-pan sanity check (--skip-calibration) since
 # validation happens downstream on your own system -- goes straight to the

@@ -514,6 +514,8 @@ def run_pipeline_range(video_path, frames_dir, pose_csv_path, batches_csv_path,
     try:
         for batch_id, (s, e) in enumerate(batches):
             t0 = time.time()
+            if device.type == 'cuda':
+                torch.cuda.reset_peak_memory_stats(device)
             frame_paths = [extractor.frame_path(time_secs[k]) for k in range(s, e)]
             overlap_prev = 0 if batch_id == 0 else batches[batch_id - 1][1] - s
 
